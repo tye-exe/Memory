@@ -16,10 +16,21 @@ where
     current_ref: Arc<Mutex<Option<Arc<Value>>>>,
 }
 
+impl<Value> From<Value> for Oda<Value>
+where
+    Value: 'static,
+{
+    /// Idiomatic to calling [`Self::new(value)`](Self::new()).
+    fn from(value: Value) -> Self {
+        Self::new(value)
+    }
+}
+
 impl<Value> Default for Oda<Value>
 where
     Value: 'static,
 {
+    /// Idiomatic to calling [`Self::new(None)`](Self::new()).
     fn default() -> Self {
         Self {
             current_ref: Arc::new(Mutex::new(None)),
@@ -33,8 +44,9 @@ where
 {
     /// Creates a new [`Oda`] pointing to the **exact same** value as the original [`Oda`].
     fn clone(&self) -> Self {
-        let arc = self.current_ref.clone();
-        Self { current_ref: arc }
+        Self {
+            current_ref: self.current_ref.clone(),
+        }
     }
 }
 
@@ -93,7 +105,6 @@ where
 
 /// [`DataAccess`](Da)
 /// Facilitates "concurrent" reading & writing for a value inside an [`Arc`].
-#[derive(Default)]
 pub struct Da<Value>
 where
     Value: 'static,
@@ -105,14 +116,37 @@ where
     current_ref: Arc<Mutex<Arc<Value>>>,
 }
 
+impl<Value> Default for Da<Value>
+where
+    Value: Default + 'static,
+{
+    /// Idiomatic to calling [`Self::new(value::default())`](Self::new()).
+    fn default() -> Self {
+        Self {
+            current_ref: Arc::new(Mutex::new(Arc::new(Value::default()))),
+        }
+    }
+}
+
+impl<Value> From<Value> for Da<Value>
+where
+    Value: 'static,
+{
+    /// Idiomatic to calling [`Self::new(value)`](Self::new()).
+    fn from(value: Value) -> Self {
+        Self::new(value)
+    }
+}
+
 impl<Value> Clone for Da<Value>
 where
     Value: 'static,
 {
     /// Creates a new [`Da`] pointing to the **exact same** value as the original [`Da`].
     fn clone(&self) -> Self {
-        let arc = self.current_ref.clone();
-        Self { current_ref: arc }
+        Self {
+            current_ref: self.current_ref.clone(),
+        }
     }
 }
 
