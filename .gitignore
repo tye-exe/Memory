@@ -1,0 +1,4 @@
+/target
+# Handles enviroment.
+.envrc
+.direnv/
