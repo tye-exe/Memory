@@ -414,7 +414,7 @@ mod tests {
     mod optional_data_access {
         use std::thread;
 
-        use crate::dummy_data::Data;
+        use crate::test_data::Data;
 
         use super::*;
 

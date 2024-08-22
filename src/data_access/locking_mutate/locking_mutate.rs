@@ -66,7 +66,7 @@ where
 mod tests {
     use crate::{
         data_access::{Da, Oda},
-        dummy_data::Data,
+        test_data::Data,
     };
 
     #[test]

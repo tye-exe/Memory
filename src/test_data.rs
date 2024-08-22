@@ -1,3 +1,4 @@
+//! Contains a struct that is used for test data.
 use std::ops::{Add, AddAssign};
 
 /// A struct that doesn't implement [`Copy`] to use as test data.
@@ -20,6 +21,14 @@ impl Add for Data {
     }
 }
 
+impl Add for &Data {
+    type Output = Data;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        (self.num + rhs.num).into()
+    }
+}
+
 impl Add<i32> for Data {
     type Output = Self;
 
@@ -29,6 +38,18 @@ impl Add<i32> for Data {
         }
 
         (self.num + rhs as u64).into()
+    }
+}
+
+impl Add<&i32> for Data {
+    type Output = Data;
+
+    fn add(self, rhs: &i32) -> Self::Output {
+        if rhs.is_negative() {
+            return self;
+        }
+
+        (self.num + *rhs as u64).into()
     }
 }
 
