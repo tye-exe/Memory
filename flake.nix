@@ -32,6 +32,7 @@
           mkShell {
             buildInputs = [
               rust-build
+              lldb_17
               mermaid-cli # Graph generation
               bacon
             ];

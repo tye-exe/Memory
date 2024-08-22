@@ -1,7 +1,20 @@
 use std::{
     clone::Clone,
-    sync::{Arc, Mutex},
+    fmt::Debug,
+    ops::Deref,
+    sync::{Arc, Mutex, MutexGuard},
+    thread::sleep,
+    time::Duration,
 };
+
+// pub fn join()
+
+// locking_mutate!(self.array, self.len, |&mut array, &mut len| {/** code */})
+
+fn a() {
+    let oda = Oda::new(1);
+    oda.lock().deref();
+}
 
 /// [`OptionalDataAccess`](Oda):
 /// Facilitates "concurrent" reading & writing for an optional value inside an [`Arc`].
@@ -13,7 +26,31 @@ where
     /// The [`Arc`] can be swapped for a new [`Arc`] pointing to a new value via an immutable reference.
     /// Therefore, the pointer is wrapped in a [`Mutex`], to combat race conditions this would introduce.
     /// The [`Mutex`] is wrapped in an [`Arc`], as clones of [`Oda`] must point to the same [`Mutex`].
-    current_ref: Arc<Mutex<Option<Arc<Value>>>>,
+    pub(super) current_ref: Arc<Mutex<Option<Arc<Value>>>>,
+}
+
+impl<Value> PartialEq for Oda<Value>
+where
+    Value: PartialEq + 'static,
+{
+    fn eq(&self, other: &Self) -> bool {
+        match (self.get(), other.get()) {
+            (None, None) => true,
+            (None, Some(_)) | (Some(_), None) => false,
+            (Some(self_data), Some(other_data)) => *self_data == *other_data,
+        }
+    }
+}
+
+impl<Value> Debug for Oda<Value>
+where
+    Value: Debug + 'static,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Oda")
+            .field("current_ref", &self.get())
+            .finish()
+    }
 }
 
 impl<Value> From<Value> for Oda<Value>
@@ -61,6 +98,12 @@ where
         }
     }
 
+    pub fn acquire(value_reference: Arc<Value>) -> Self {
+        Self {
+            current_ref: Arc::new(Mutex::new(Some(value_reference))),
+        }
+    }
+
     /// Gets a reference to the current underlying data.
     ///
     /// This reference **will be uneffected** by any subsequent mutations.
@@ -78,6 +121,24 @@ where
         *old_data = Some(Arc::new(new_data));
     }
 
+    /// Replaces the the [`Arc`] contained within [`Self`] to the given [`Arc`]. The given [`Arc`] is
+    /// held via a strong reference.
+    ///
+    /// See [`Self::set()`] for more information on the behaviour of current & new references.
+    pub fn replace(&self, data_arc: Option<Arc<Value>>) {
+        let mut old_data = self.current_ref.lock().unwrap();
+        *old_data = data_arc;
+    }
+
+    pub fn empty(&self) -> Option<Arc<Value>> {
+        let old_arc = self.get();
+
+        let mut old_data = self.current_ref.lock().unwrap();
+        *old_data = None;
+
+        old_arc
+    }
+
     /// If there is underlying data, it's cloned & the given function will be called with it as the parameter.
     /// The value returned from the function will be set as the new underlying data.
     /// If there is no data then this method **has no effect**.
@@ -88,10 +149,10 @@ where
     /// Due to cloning the data out of the [`Oda`], the value passed into the function **is immutable**.
     ///
     /// See [`Self::set()`] for more information on the behaviour of current & new references.
-    pub fn mutate<F>(&self, func: F)
+    pub fn mutate<Func>(&self, func: Func)
     where
         Value: Clone,
-        F: FnOnce(Value) -> Value,
+        Func: FnOnce(Value) -> Value,
     {
         match self.get() {
             Some(old_value) => {
@@ -100,6 +161,10 @@ where
             }
             None => {}
         }
+    }
+
+    fn lock(&self) -> MutexGuard<Option<Arc<Value>>> {
+        self.current_ref.lock().unwrap()
     }
 }
 
@@ -113,7 +178,18 @@ where
     /// The [`Arc`] can be swapped for a new [`Arc`] pointing to a new value via an immutable reference.
     /// Therefore, the pointer is wrapped in a [`Mutex`], to combat race conditions this would introduce.
     /// The [`Mutex`] is wrapped in an [`Arc`], as clones of [`Da`] must point to the same [`Mutex`].
-    current_ref: Arc<Mutex<Arc<Value>>>,
+    pub(super) current_ref: Arc<Mutex<Arc<Value>>>,
+}
+
+impl<Value> Debug for Da<Value>
+where
+    Value: Debug + 'static,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Da")
+            .field("current_ref", &self.get())
+            .finish()
+    }
 }
 
 impl<Value> Default for Da<Value>
@@ -178,6 +254,11 @@ where
         *old_data = Arc::new(new_data);
     }
 
+    pub fn replace(&self, data_arc: Arc<Value>) {
+        let mut old_data = self.current_ref.lock().unwrap();
+        *old_data = data_arc;
+    }
+
     /// Clones the existing underlying data & calls the given function with the clone as the parameter.
     /// The value returned from the function will be set as the new underlying data.
     ///
@@ -187,10 +268,10 @@ where
     /// Due to cloning the data out of the [`Da`], the value passed into the function **is immutable**.
     ///
     /// See [`Self::set()`] for more information on the behaviour of current & new references.
-    pub fn mutate<F>(&self, func: F)
+    pub fn mutate<Func>(&self, func: Func)
     where
         Value: Clone,
-        F: FnOnce(Value) -> Value,
+        Func: FnOnce(Value) -> Value,
     {
         let mutated_value = func((*self.get()).clone());
         self.set(mutated_value);
@@ -333,6 +414,8 @@ mod tests {
     mod optional_data_access {
         use std::thread;
 
+        use crate::dummy_data::Data;
+
         use super::*;
 
         fn get_default() -> Oda<DummyData> {
@@ -447,6 +530,47 @@ mod tests {
             assert_eq!(*data_access.get().unwrap(), DummyData::new("", 1));
             // The pointer to the value set during the mutation will still be valid.
             assert_eq!(*set_value, dummy_data);
+        }
+
+        #[test]
+        fn acquire() {
+            let original = Oda::new(DummyData::new("A!", 0));
+            let acquired = Oda::acquire(original.get().unwrap());
+
+            assert_eq!(original.get(), acquired.get());
+
+            // original has a new internal arc.
+            original.set(DummyData::default());
+
+            assert_eq!((*acquired.get().unwrap()), DummyData::new("A!", 0));
+            assert_eq!(*original.get().unwrap(), DummyData::default());
+        }
+
+        #[test]
+        fn replace() {
+            let original = Oda::new(DummyData::new("A!", 0));
+
+            let to_replace = Oda::default();
+            to_replace.replace(Some(original.get().unwrap()));
+
+            assert_eq!(original.get(), to_replace.get());
+
+            // original has a new internal arc.
+            original.set(DummyData::default());
+
+            assert_eq!((*to_replace.get().unwrap()), DummyData::new("A!", 0));
+            assert_eq!(*original.get().unwrap(), DummyData::default());
+        }
+
+        #[test]
+        fn empty() {
+            let oda = Oda::new(Data::default());
+            assert_eq!(*oda.get().unwrap(), Data::default());
+
+            let empty = oda.empty();
+            assert_eq!(*empty.unwrap(), Data::default());
+
+            assert!(oda.get().is_none());
         }
     }
 }
