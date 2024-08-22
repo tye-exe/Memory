@@ -1,42 +1,58 @@
+//! Contains the [`locking_mutate!()`] macro.
+//! See its documentation for more detail.
+
 use std::sync::{Arc, MutexGuard};
 
 #[macro_export]
 macro_rules! locking_mutate {
     ($($data_access:ident), + $func:expr) => {
         {
-            use paste::paste; // Creates new idents
-            use $crate::data_access::locking_mutate::data_structures::*; // Newtypes for converting values
+            // This macro allows for creating new identities within rust code.
+            // This is used to create unique local variables during repetitions, otherwise
+            // the given identities would have to be shadowed. Making the desired functionality
+            // impossible.
+            use paste::paste;
+            // Contains newtypes for converting values, as this macro has to deal with both
+            // the `Data Access (Da)` & `Optional Data Access (Oda)` structs. Which isn't
+            // possible as differeing methods have to be used to produce the same outcome
+            // for each struct.
+            // The newtypes abstract away this behaviour, as the methods used can't be modified
+            // at compile time by this macro.
+            use $crate::data_access::locking_mutate::data_structures::*;
 
-            // Acquire mutex lock on both
+            // Assigned each acquired mutex lock to unique local variables.
             // TODO: resolve possible dead-lock
             let ($(paste!{mut [<$data_access _lock>]}, )+) = ($($crate::data_access::locking_mutate::Lock::lock(&$data_access),)+);
 
-            // Executes the given function
+            // Executes the given function/closure.
             let ($(paste!{[<$data_access _modified>]}, )+) = $func($(
                 {
-                    // let value = Converter::from(*paste!{[<$data_access _lock>]});
-                    // value.custom_into()
+                    // Clones the value out of the `Arc` as the type isn't guaranteed to
+                    // implement `Copy`
                     paste!{[<$data_access _lock>]}.ooa()
                 },
             )+);
 
-            // Replaces the internal value with the result
+            // Replaces the internal values with returned values from the function/closure.
             $(
                 *paste!{[<$data_access _lock>]} = {
+                    // Split into separate lines to aid in legibility.
                     let value = paste!{[<$data_access _modified>]};
-                    // value.into()
+                    // See above comments for `data_structures` use expression.
                     let value = Wrapper::from(value);
                     value.into()
                 };
             )+
-            // ($({$data_access.replace(Arc::new(paste!{[<$data_access _modified>]}))}, )+);
         }
     };
 }
 
+/// Provides solitary access to data via a [`MutexGuard`].
 pub trait Lock<Value> {
+    /// The value contained within the returned [`MutexGuard`].
     type Returns;
 
+    /// Returns a [`MutexGuard`] to the underlying data represented by this struct.
     fn lock<'a>(&'a self) -> MutexGuard<'a, Self::Returns>;
 }
 

@@ -1,32 +1,190 @@
+//! Contains structures that allow for quazi concurrent reading & writing of a value.
+
 use std::{
     clone::Clone,
     fmt::Debug,
-    ops::Deref,
     sync::{Arc, Mutex, MutexGuard},
-    thread::sleep,
-    time::Duration,
 };
 
-// pub fn join()
-
-// locking_mutate!(self.array, self.len, |&mut array, &mut len| {/** code */})
-
-fn a() {
-    let oda = Oda::new(1);
-    oda.lock().deref();
-}
-
-/// [`OptionalDataAccess`](Oda):
-/// Facilitates "concurrent" reading & writing for an optional value inside an [`Arc`].
+/// [`OptionalDataAccess`](Oda)
+/// ---
+///
+/// Facilitates "concurrent" reading & writing for the given (optional) value.
 pub struct Oda<Value>
 where
     Value: 'static,
 {
-    /// Let me explain; There is an optional [`Arc`] that points to a value on the heap.
-    /// The [`Arc`] can be swapped for a new [`Arc`] pointing to a new value via an immutable reference.
-    /// Therefore, the pointer is wrapped in a [`Mutex`], to combat race conditions this would introduce.
-    /// The [`Mutex`] is wrapped in an [`Arc`], as clones of [`Oda`] must point to the same [`Mutex`].
+    /// Contains the data being represented.
+    /// ---
+    ///
+    /// The innermost `Value` is surrounded by an [`Arc`], so that it lives on the heap & can outlive
+    /// the reference to it from this struct.
+    ///
+    /// With the [`Mutex`] being wrapped in an [`Arc`] to allow multiple instances to point to same
+    /// data, as it will be stored on the heap.
     pub(super) current_ref: Arc<Mutex<Option<Arc<Value>>>>,
+}
+
+impl<Value> Oda<Value>
+where
+    Value: 'static,
+{
+    /// Creates a new [`Oda<Value>`].
+    pub fn new(data: Value) -> Self {
+        Self {
+            current_ref: Arc::new(Mutex::new(Some(Arc::new(data)))),
+        }
+    }
+
+    /// Creates a new [`Oda<Value>`] which references the given [`Arc`].
+    pub fn acquire(value_reference: Arc<Value>) -> Self {
+        Self {
+            current_ref: Arc::new(Mutex::new(Some(value_reference))),
+        }
+    }
+
+    /// Gets a reference to the current underlying data.
+    ///
+    /// This reference **will be uneffected** by any subsequent mutations.
+    pub fn get(&self) -> Option<Arc<Value>> {
+        self.current_ref.lock().unwrap().clone()
+    }
+
+    /// Creates new underlying data with the given value; Whilst leaving the old data references uneffected.
+    ///
+    /// Any subsequent calls to [`get`](Self::get()) will return the new data.
+    ///
+    /// Any existing references from [`get`](Self::get()) will remain pointing to the old data.
+    pub fn set(&self, new_data: Value) {
+        let mut old_data = self.current_ref.lock().unwrap();
+        *old_data = Some(Arc::new(new_data));
+    }
+
+    /// Replaces the the [`Arc`] contained within [`Self`] to the given [`Arc`]. The given [`Arc`] is
+    /// held via a strong reference.
+    ///
+    /// See [`Self::set()`] for more information on the behaviour of current & future references.
+    pub fn replace(&self, data_arc: Option<Arc<Value>>) {
+        let mut old_data = self.current_ref.lock().unwrap();
+        *old_data = data_arc;
+    }
+
+    /// Takes the value out of the [`Oda`], leaving `None` in its place.
+    ///
+    /// See [`Self::set()`] for more information on the behaviour of current & future references.
+    pub fn empty(&self) -> Option<Arc<Value>> {
+        self.current_ref.lock().unwrap().take()
+    }
+
+    /// If there is underlying data, it's cloned & the given function will be called with it as the parameter.
+    /// The value returned from the function will be set as the new underlying data.
+    /// If there is no data then this method **has no effect**.
+    ///
+    /// This method **does not** hold a lock on the underlying data whilst the given function is executing.
+    /// It only waits to acquire a lock when it's reading the value for the initial clone & when writing the
+    /// mutated value back to the [`Oda`].
+    /// Due to cloning the data out of the [`Oda`], the value passed into the function **is immutable**.
+    ///
+    /// See [`locking_mutate!()`](crate::data_access::locking_mutate::locking_mutate) if you want a persistent lock.
+    ///
+    /// See [`Self::set()`] for more information on the behaviour of current & future references.
+    pub fn mutate<Func>(&self, func: Func)
+    where
+        Value: Clone,
+        Func: FnOnce(Value) -> Value,
+    {
+        match self.get() {
+            Some(old_value) => {
+                let mutated_value = func((*old_value).clone());
+                self.set(mutated_value);
+            }
+            None => {}
+        }
+    }
+}
+
+/// [`DataAccess`](Da)
+/// ---
+///
+/// Facilitates "concurrent" reading & writing for the given value.
+pub struct Da<Value>
+where
+    Value: 'static,
+{
+    /// Contains the data being represented.
+    /// ---
+    ///
+    /// The innermost `Value` is surrounded by an [`Arc`], so that it lives on the heap & can outlive
+    /// the reference to it from this struct.
+    ///
+    /// With the [`Mutex`] being wrapped in an [`Arc`] to allow multiple instances to point to same
+    /// data, as it will be stored on the heap.
+    pub(super) current_ref: Arc<Mutex<Arc<Value>>>,
+}
+
+impl<Value> Da<Value>
+where
+    Value: 'static,
+{
+    /// Creates a new [`Da<Value>`].
+    pub fn new(data: Value) -> Self {
+        Self {
+            current_ref: Arc::new(Mutex::new(Arc::new(data))),
+        }
+    }
+
+    /// Creates a new [`Oda<Value>`] which references the given [`Arc`].
+    pub fn acquire(value_reference: Arc<Value>) -> Self {
+        Self {
+            current_ref: Arc::new(Mutex::new(value_reference)),
+        }
+    }
+
+    /// Gets a reference to the current underlying data.
+    ///
+    /// This reference **will be uneffected** by any subsequent mutations.
+    pub fn get(&self) -> Arc<Value> {
+        self.current_ref.lock().unwrap().clone()
+    }
+
+    /// Creates new underlying data with the given value; Whilst leaving the old data references uneffected.
+    ///
+    /// Any subsequent calls to [`get`](Self::get()) will return the new data.
+    ///
+    /// Any existing references from [`get`](Self::get()) will remain pointing to the old data.
+    pub fn set(&self, new_data: Value) {
+        let mut old_data = self.current_ref.lock().unwrap();
+        *old_data = Arc::new(new_data);
+    }
+
+    /// Replaces the the [`Arc`] contained within [`Self`] to the given [`Arc`]. The given [`Arc`] is
+    /// held via a strong reference.
+    ///
+    /// See [`Self::set()`] for more information on the behaviour of current & future references.
+    pub fn replace(&self, data_arc: Arc<Value>) {
+        let mut old_data = self.current_ref.lock().unwrap();
+        *old_data = data_arc;
+    }
+
+    /// Clones the existing underlying data & calls the given function with the clone as the parameter.
+    /// The value returned from the function will be set as the new underlying data.
+    ///
+    /// This method **does not** hold a lock on the underlying data whilst the given function is executing.
+    /// It only waits to acquire a lock when it's reading the value for the initial clone & when writing the
+    /// mutated value back to the [`Da`].
+    /// Due to cloning the data out of the [`Da`], the value passed into the function **is immutable**.
+    ///
+    /// See [`locking_mutate!()`](crate::data_access::locking_mutate::locking_mutate) if you want a persistent lock.
+    ///
+    /// See [`Self::set()`] for more information on the behaviour of current & future references.
+    pub fn mutate<Func>(&self, func: Func)
+    where
+        Value: Clone,
+        Func: FnOnce(Value) -> Value,
+    {
+        let mutated_value = func((*self.get()).clone());
+        self.set(mutated_value);
+    }
 }
 
 impl<Value> PartialEq for Oda<Value>
@@ -87,100 +245,6 @@ where
     }
 }
 
-impl<Value> Oda<Value>
-where
-    Value: 'static,
-{
-    /// Creates a new [`Oda<Value>`].
-    pub fn new(data: Value) -> Self {
-        Self {
-            current_ref: Arc::new(Mutex::new(Some(Arc::new(data)))),
-        }
-    }
-
-    pub fn acquire(value_reference: Arc<Value>) -> Self {
-        Self {
-            current_ref: Arc::new(Mutex::new(Some(value_reference))),
-        }
-    }
-
-    /// Gets a reference to the current underlying data.
-    ///
-    /// This reference **will be uneffected** by any subsequent mutations.
-    pub fn get(&self) -> Option<Arc<Value>> {
-        self.current_ref.lock().unwrap().clone()
-    }
-
-    /// Creates new underlying data with the given value; Whilst leaving the old data references uneffected.
-    ///
-    /// Any subsequent calls to [`get`](Self::get()) will return the new data.
-    ///
-    /// Any existing references from [`get`](Self::get()) will remain pointing to the old data.
-    pub fn set(&self, new_data: Value) {
-        let mut old_data = self.current_ref.lock().unwrap();
-        *old_data = Some(Arc::new(new_data));
-    }
-
-    /// Replaces the the [`Arc`] contained within [`Self`] to the given [`Arc`]. The given [`Arc`] is
-    /// held via a strong reference.
-    ///
-    /// See [`Self::set()`] for more information on the behaviour of current & new references.
-    pub fn replace(&self, data_arc: Option<Arc<Value>>) {
-        let mut old_data = self.current_ref.lock().unwrap();
-        *old_data = data_arc;
-    }
-
-    pub fn empty(&self) -> Option<Arc<Value>> {
-        let old_arc = self.get();
-
-        let mut old_data = self.current_ref.lock().unwrap();
-        *old_data = None;
-
-        old_arc
-    }
-
-    /// If there is underlying data, it's cloned & the given function will be called with it as the parameter.
-    /// The value returned from the function will be set as the new underlying data.
-    /// If there is no data then this method **has no effect**.
-    ///
-    /// This method **does not** hold a lock on the underlying data whilst the given function is executing.
-    /// It only waits to acquire a lock when it's reading the value for the initial clone & when writing the
-    /// mutated value back to the [`Oda`].
-    /// Due to cloning the data out of the [`Oda`], the value passed into the function **is immutable**.
-    ///
-    /// See [`Self::set()`] for more information on the behaviour of current & new references.
-    pub fn mutate<Func>(&self, func: Func)
-    where
-        Value: Clone,
-        Func: FnOnce(Value) -> Value,
-    {
-        match self.get() {
-            Some(old_value) => {
-                let mutated_value = func((*old_value).clone());
-                self.set(mutated_value);
-            }
-            None => {}
-        }
-    }
-
-    fn lock(&self) -> MutexGuard<Option<Arc<Value>>> {
-        self.current_ref.lock().unwrap()
-    }
-}
-
-/// [`DataAccess`](Da)
-/// Facilitates "concurrent" reading & writing for a value inside an [`Arc`].
-pub struct Da<Value>
-where
-    Value: 'static,
-{
-    /// Let me explain; There is an [`Arc`] that points to a value on the heap.
-    /// The [`Arc`] can be swapped for a new [`Arc`] pointing to a new value via an immutable reference.
-    /// Therefore, the pointer is wrapped in a [`Mutex`], to combat race conditions this would introduce.
-    /// The [`Mutex`] is wrapped in an [`Arc`], as clones of [`Da`] must point to the same [`Mutex`].
-    pub(super) current_ref: Arc<Mutex<Arc<Value>>>,
-}
-
 impl<Value> Debug for Da<Value>
 where
     Value: Debug + 'static,
@@ -223,58 +287,6 @@ where
         Self {
             current_ref: self.current_ref.clone(),
         }
-    }
-}
-
-impl<Value> Da<Value>
-where
-    Value: 'static,
-{
-    /// Creates a new [`Da<Value>`].
-    pub fn new(data: Value) -> Self {
-        Self {
-            current_ref: Arc::new(Mutex::new(Arc::new(data))),
-        }
-    }
-
-    /// Gets a reference to the current underlying data.
-    ///
-    /// This reference **will be uneffected** by any subsequent mutations.
-    pub fn get(&self) -> Arc<Value> {
-        self.current_ref.lock().unwrap().clone()
-    }
-
-    /// Creates new underlying data with the given value; Whilst leaving the old data references uneffected.
-    ///
-    /// Any subsequent calls to [`get`](Self::get()) will return the new data.
-    ///
-    /// Any existing references from [`get`](Self::get()) will remain pointing to the old data.
-    pub fn set(&self, new_data: Value) {
-        let mut old_data = self.current_ref.lock().unwrap();
-        *old_data = Arc::new(new_data);
-    }
-
-    pub fn replace(&self, data_arc: Arc<Value>) {
-        let mut old_data = self.current_ref.lock().unwrap();
-        *old_data = data_arc;
-    }
-
-    /// Clones the existing underlying data & calls the given function with the clone as the parameter.
-    /// The value returned from the function will be set as the new underlying data.
-    ///
-    /// This method **does not** hold a lock on the underlying data whilst the given function is executing.
-    /// It only waits to acquire a lock when it's reading the value for the initial clone & when writing the
-    /// mutated value back to the [`Da`].
-    /// Due to cloning the data out of the [`Da`], the value passed into the function **is immutable**.
-    ///
-    /// See [`Self::set()`] for more information on the behaviour of current & new references.
-    pub fn mutate<Func>(&self, func: Func)
-    where
-        Value: Clone,
-        Func: FnOnce(Value) -> Value,
-    {
-        let mutated_value = func((*self.get()).clone());
-        self.set(mutated_value);
     }
 }
 
