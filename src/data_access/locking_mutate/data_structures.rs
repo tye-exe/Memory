@@ -8,7 +8,10 @@
 
 // Used for module doc links.
 #[allow(unused_imports)]
-use crate::data_access::{locking_mutate::locking_mutate as lm, Da, Oda};
+use crate::{
+    data_access::{Da, Oda},
+    locking_mutate as lm,
+};
 
 use std::sync::Arc;
 
