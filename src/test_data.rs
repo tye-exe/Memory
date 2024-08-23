@@ -2,9 +2,24 @@
 use std::ops::{Add, AddAssign};
 
 /// A struct that doesn't implement [`Copy`] to use as test data.
-#[derive(Debug, Default, PartialEq, Clone)]
+#[derive(Debug, Default, Clone)]
 pub(crate) struct Data {
-    num: u64,
+    num: i32,
+}
+
+impl<T> PartialEq<T> for Data
+where
+    for<'a> &'a T: Into<i32>,
+{
+    fn eq(&self, other: &T) -> bool {
+        self.num == other.into()
+    }
+}
+
+impl PartialEq for Data {
+    fn eq(&self, other: &Data) -> bool {
+        self.num == other.num
+    }
 }
 
 impl AddAssign for Data {
@@ -13,55 +28,33 @@ impl AddAssign for Data {
     }
 }
 
-impl Add for Data {
+impl<T> Add<T> for Data
+where
+    T: Into<i32>,
+{
     type Output = Self;
 
-    fn add(self, rhs: Self) -> Self::Output {
-        (self.num + rhs.num).into()
+    fn add(self, rhs: T) -> Self::Output {
+        let num: i32 = rhs.into();
+        (self.num + num).into()
     }
 }
 
-impl Add for &Data {
-    type Output = Data;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        (self.num + rhs.num).into()
+impl From<Data> for i32 {
+    fn from(value: Data) -> Self {
+        value.num
     }
 }
 
-impl Add<i32> for Data {
-    type Output = Self;
-
-    fn add(self, rhs: i32) -> Self::Output {
-        if rhs.is_negative() {
-            return self;
-        }
-
-        (self.num + rhs as u64).into()
-    }
-}
-
-impl Add<&i32> for Data {
-    type Output = Data;
-
-    fn add(self, rhs: &i32) -> Self::Output {
-        if rhs.is_negative() {
-            return self;
-        }
-
-        (self.num + *rhs as u64).into()
-    }
-}
-
-impl<T: Into<u64>> From<T> for Data {
-    fn from(value: T) -> Self {
-        Self::new(value.into())
+impl From<i32> for Data {
+    fn from(value: i32) -> Self {
+        Data::new(value)
     }
 }
 
 impl Data {
     /// Creates a new [`Data`].
-    pub(crate) fn new(num: u64) -> Self {
+    pub(crate) fn new(num: i32) -> Self {
         Self { num }
     }
 }

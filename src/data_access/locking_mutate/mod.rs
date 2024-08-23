@@ -100,8 +100,8 @@ mod tests {
             (one + Data::new(1), two + Data::new(1))
         });
 
-        assert_eq!(da_one.get().as_ref(), &2u64.into());
-        assert_eq!(da_two.get().as_ref(), &3u64.into());
+        assert_eq!(*da_one.get(), 2.into());
+        assert_eq!(*da_two.get(), 3.into());
     }
 
     #[test]
@@ -113,7 +113,7 @@ mod tests {
             (one.map(|value| value + 1), two.map(|value| value + 1))
         });
 
-        assert_eq!(oda_one.get().unwrap().as_ref(), &2u64.into());
-        assert_eq!(oda_two.get().unwrap().as_ref(), &3u64.into());
+        assert_eq!(*oda_one.get().unwrap(), 2.into());
+        assert_eq!(*oda_two.get().unwrap(), 3.into());
     }
 }
