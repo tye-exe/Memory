@@ -27,9 +27,9 @@ impl<Value> From<Value> for Converter<Value> {
     }
 }
 
-impl<Value: Clone> Into<Option<Value>> for Converter<Value> {
-    fn into(self) -> Option<Value> {
-        self.0.map(|value| (*value).clone())
+impl<Value: Clone> From<Converter<Value>> for Option<Value> {
+    fn from(val: Converter<Value>) -> Self {
+        val.0.map(|value| (*value).clone())
     }
 }
 

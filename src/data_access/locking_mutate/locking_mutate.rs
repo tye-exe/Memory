@@ -53,7 +53,7 @@ pub trait Lock<Value> {
     type Returns;
 
     /// Returns a [`MutexGuard`] to the underlying data represented by this struct.
-    fn lock<'a>(&'a self) -> MutexGuard<'a, Self::Returns>;
+    fn lock(&self) -> MutexGuard<'_, Self::Returns>;
 }
 
 impl<Value> Lock<Value> for crate::data_access::Oda<Value>
@@ -62,7 +62,7 @@ where
 {
     type Returns = Option<Arc<Value>>;
 
-    fn lock<'a>(&'a self) -> MutexGuard<'a, Self::Returns> {
+    fn lock(&self) -> MutexGuard<'_, Self::Returns> {
         self.current_ref.lock().unwrap()
     }
 }
@@ -73,7 +73,7 @@ where
 {
     type Returns = Arc<Value>;
 
-    fn lock<'a>(&'a self) -> MutexGuard<'a, Self::Returns> {
+    fn lock(&self) -> MutexGuard<'_, Self::Returns> {
         self.current_ref.lock().unwrap()
     }
 }

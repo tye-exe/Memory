@@ -93,12 +93,9 @@ where
         Value: Clone,
         Func: FnOnce(Value) -> Value,
     {
-        match self.get() {
-            Some(old_value) => {
-                let mutated_value = func((*old_value).clone());
-                self.set(mutated_value);
-            }
-            None => {}
+        if let Some(old_value) = self.get() {
+            let mutated_value = func((*old_value).clone());
+            self.set(mutated_value);
         }
     }
 }
