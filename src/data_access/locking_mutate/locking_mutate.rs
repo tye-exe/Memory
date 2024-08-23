@@ -5,7 +5,7 @@ use std::sync::{Arc, MutexGuard};
 
 #[macro_export]
 macro_rules! locking_mutate {
-    ($($data_access:ident), + $func:expr) => {
+    ($($data_access:ident), +; $func:expr) => {
         {
             // This macro allows for creating new identities within rust code.
             // This is used to create unique local variables during repetitions, otherwise
@@ -90,7 +90,7 @@ mod tests {
         let da_one = Da::new(Data::new(1));
         let da_two = Da::new(Data::new(2));
 
-        locking_mutate!(da_one, da_two |one: Data, two: Data| {
+        locking_mutate!(da_one, da_two; |one: Data, two: Data| {
             (one + Data::new(1), two + Data::new(1))
         });
 
@@ -103,7 +103,7 @@ mod tests {
         let oda_one = Oda::new(Data::new(1));
         let oda_two = Oda::new(Data::new(2));
 
-        locking_mutate!(oda_one, oda_two |one: Option<Data>, two: Option<Data>| {
+        locking_mutate!(oda_one, oda_two; |one: Option<Data>, two: Option<Data>| {
             (one.map(|value| value + 1), two.map(|value| value + 1))
         });
 

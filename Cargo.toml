@@ -3,8 +3,9 @@ name = "cell_memory"
 version = "0.1.0"
 edition = "2021"
 
-[dev-dependencies]
-rand = "0.8.5"
-
 [dependencies]
 paste = "1.0.15"
+
+[dev-dependencies]
+rand = "0.8.5"
+oneshot = "0.1.8"
