@@ -310,7 +310,7 @@ mod tests {
 
     #[cfg(test)]
     mod data_access {
-        use std::{thread, time::Duration};
+        use std::thread;
 
         use super::*;
 
