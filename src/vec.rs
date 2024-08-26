@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use crate::data_access::{Da, Oda};
+use crate::{
+    data_access::{Da, Oda},
+    locking_mutate,
+};
 
 struct CellVec<Value>
 where
@@ -11,6 +14,35 @@ where
     /// The current highest index of any inserted value.
     len: Da<usize>,
     array: Da<Box<[Oda<Value>]>>,
+}
+
+impl<Value> Clone for CellVec<Value>
+where
+    Value: 'static,
+{
+    fn clone(&self) -> Self {
+        CellVec {
+            capacity: self.capacity.clone(),
+            len: self.len.clone(),
+            array: self.array.clone(),
+        }
+    }
+}
+
+impl<Value> IntoIterator for CellVec<Value>
+where
+    Value: 'static,
+{
+    type Item = Da<Value>;
+
+    type IntoIter = CellVecIterator<Value>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        CellVecIterator {
+            cell_vec: self,
+            index: 0,
+        }
+    }
 }
 
 impl<Value> CellVec<Value>
@@ -36,96 +68,245 @@ where
     }
 
     pub fn get(&self, index: usize) -> Option<Arc<Value>> {
-        (**self.array.get())[index].get()
+        if self.in_bounds(index) {
+            Some(
+                (**self.array.get())[index]
+                    .get()
+                    .expect("A value will always exist"),
+            )
+        } else {
+            None
+        }
     }
 
-    // pub fn set(&self, index: usize, new_value: Value) -> Arc<Value> {
-    //     let previous_value = self.get(index);
-    //     (**self.array.get())[index].set(new_value);
-    //     previous_value
-    // }
-
     pub fn push(&self, new_value: Value) {
-        // If the array is full then allocate a new one
-        if *self.len.get() >= *self.capacity.get() {
-            self.array.mutate(|array| {
+        let closure = |mut len: usize, mut capacity: usize, mut array: Box<[Oda<Value>]>| {
+            if len >= capacity {
                 // Creates clones of every existing value.
                 let existing_iter = array.iter().map(|value| (*value).clone());
 
                 // Creates new default Oda's to pad the array.
-                let size = (*self.capacity.get()).max(1);
+                let size = capacity.max(1);
                 let default_iter = (0..size).map(|_| -> Oda<Value> { Oda::default() });
 
-                existing_iter.chain(default_iter).collect()
-            });
+                array = existing_iter.chain(default_iter).collect();
 
-            // Double the allocated size
-            self.capacity.mutate(|capacity| {
                 if capacity == 0 {
-                    capacity + 1
+                    capacity += 1;
                 } else {
-                    capacity * 2
+                    capacity <<= 1;
                 }
-            });
-        }
+            }
 
-        // Increment the length
-        self.len.mutate(|len| {
-            // Set the new value at the current max length.
-            (**self.array.get())[len].set(new_value);
-            len + 1
-        });
+            array[len].set(new_value);
+
+            len += 1;
+            (len, capacity, array)
+        };
+
+        let (len, capacity, array) = (self.len.clone(), self.capacity.clone(), self.array.clone());
+
+        locking_mutate!(len, capacity, array; closure);
     }
 
     pub fn remove(&self, index: usize) -> Option<Arc<Value>> {
+        if !self.in_bounds(index) {
+            return None;
+        }
+
         let mut removed = None;
 
-        self.array.mutate(|array| {
-            removed = array[index].empty();
-            array
-        });
+        let mut closure = |mut len: usize, mut capacity: usize, mut array: Box<[Oda<Value>]>| {
+            let (first, second) = array.split_at(index);
+            let (removed_ele, second) = second.split_at(1);
 
-        // No value was at given index
-        if removed.is_none() {
-            return removed;
-        }
+            removed = removed_ele[0].get();
+
+            array = [first, second].concat().into();
+
+            if removed.is_none() {
+                return (len, capacity, array);
+            }
+
+            len -= 1;
+
+            // if len == 0 {
+            //     capacity = 0
+            // }
+
+            if capacity >> 1 >= len {
+                capacity >>= 1;
+            }
+
+            (len, capacity, array)
+        };
+
+        let (len, capacity, array) = (self.len.clone(), self.capacity.clone(), self.array.clone());
+
+        locking_mutate!(len, capacity, array; closure);
 
         removed
     }
+}
 
-    // fn test(&self) {
-    //     locking_mutate!(self.array, self.len, |&mut array, &mut len| {/** code */})
-    // }
+struct CellVecIterator<Value>
+where
+    Value: 'static,
+{
+    cell_vec: CellVec<Value>,
+    index: usize,
+}
+
+impl<Value> Iterator for CellVecIterator<Value>
+where
+    Value: 'static,
+{
+    type Item = Da<Value>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let value = self.cell_vec.get(self.index);
+        let value = value.map(|value| Da::acquire(value));
+        self.index += 1;
+        value
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::test_data::Data;
+
     use super::*;
 
-    // #[test]
-    // fn push_empty() {
-    //     let cell_vec = CellVec::new();
-    //     cell_vec.push(Data::default());
-    //     assert_eq!(*cell_vec.get(0), Data::default());
-    // }
+    fn populate(size: usize) -> CellVec<Data> {
+        let cell_vec: CellVec<Data> = CellVec::new();
 
-    // #[test]
-    // fn multiple_push() {
-    //     let cell_vec: CellVec<Data> = CellVec::new();
+        for num in 0..size as i32 {
+            cell_vec.push(Data::new(num));
+        }
 
-    //     for num in 0..12 {
-    //         cell_vec.push(num.into());
-    //     }
+        // Sanity check
+        assert_eq!(*cell_vec.len.get(), size);
+        cell_vec
+    }
 
-    //     for num in 0..12 {
-    //         assert_eq!(*cell_vec.get(num as usize), num.into());
-    //     }
-    // }
+    #[test]
+    fn get_bounds_check() {
+        let cell_vec: CellVec<Data> = CellVec::new();
+        assert!(cell_vec.get(0).is_none());
+        assert!(cell_vec.get(20).is_none());
+    }
 
-    // // fn set() {}
+    #[test]
+    fn push_empty() {
+        let cell_vec = CellVec::new();
+        cell_vec.push(Data::default());
+        assert_eq!(*cell_vec.get(0).unwrap(), Data::default());
+    }
 
-    // #[test]
-    // fn remove() {
-    //     let cell_vec = CellVec::new();
-    // }
+    #[test]
+    fn push() {
+        let cell_vec: CellVec<Data> = populate(12);
+
+        for num in 0..12 {
+            assert_eq!(*cell_vec.get(num as usize).unwrap(), num.into());
+        }
+    }
+
+    #[test]
+    fn remove_bounds_check() {
+        let cell_vec = populate(10);
+        // Within array bounds
+        assert!(cell_vec.remove(10).is_none());
+        // Out of array bounds
+        assert!(cell_vec.remove(21).is_none());
+    }
+
+    #[test]
+    fn remove_end() {
+        let cell_vec = populate(4);
+        assert_eq!(*cell_vec.remove(3).unwrap(), 3.into());
+
+        assert_eq!(*cell_vec.get(0).unwrap(), 0.into());
+        assert_eq!(*cell_vec.get(1).unwrap(), 1.into());
+        assert_eq!(*cell_vec.get(2).unwrap(), 2.into());
+
+        assert!(cell_vec.get(3).is_none());
+    }
+
+    #[test]
+    fn remove_middle() {
+        let cell_vec = populate(4);
+        assert_eq!(*cell_vec.remove(1).unwrap(), 1.into());
+
+        assert_eq!(*cell_vec.get(0).unwrap(), 0.into());
+        assert_eq!(*cell_vec.get(1).unwrap(), 2.into());
+        assert_eq!(*cell_vec.get(2).unwrap(), 3.into());
+
+        assert!(cell_vec.get(3).is_none());
+    }
+
+    #[test]
+    fn remove_start() {
+        let cell_vec = populate(4);
+        assert_eq!(*cell_vec.remove(0).unwrap(), 0.into());
+
+        assert_eq!(*cell_vec.get(0).unwrap(), 1.into());
+        assert_eq!(*cell_vec.get(1).unwrap(), 2.into());
+        assert_eq!(*cell_vec.get(2).unwrap(), 3.into());
+
+        assert!(cell_vec.get(3).is_none());
+    }
+
+    #[test]
+    fn grows() {
+        let cell_vec = CellVec::new();
+        assert_eq!(cell_vec.capacity.copy_value(), 0);
+
+        cell_vec.push(Data::default());
+        assert_eq!(cell_vec.capacity.copy_value(), 1);
+
+        cell_vec.push(Data::default());
+        assert_eq!(cell_vec.capacity.copy_value(), 2);
+
+        cell_vec.push(Data::default());
+        assert_eq!(cell_vec.capacity.copy_value(), 4);
+        cell_vec.push(Data::default());
+        assert_eq!(cell_vec.capacity.copy_value(), 4);
+
+        cell_vec.push(Data::default());
+        assert_eq!(cell_vec.capacity.copy_value(), 8);
+    }
+
+    #[test]
+    fn shirnks() {
+        let cell_vec = populate(5);
+        assert_eq!(cell_vec.capacity.copy_value(), 8usize);
+
+        cell_vec.remove(0);
+        assert_eq!(cell_vec.capacity.copy_value(), 4usize);
+        cell_vec.remove(0);
+        assert_eq!(cell_vec.capacity.copy_value(), 4usize);
+
+        cell_vec.remove(0);
+        assert_eq!(cell_vec.capacity.copy_value(), 2usize);
+
+        cell_vec.remove(0);
+        assert_eq!(cell_vec.capacity.copy_value(), 1usize);
+
+        cell_vec.remove(0);
+        assert_eq!(cell_vec.capacity.copy_value(), 0usize);
+    }
+
+    #[test]
+    fn iterator() {
+        let cell_vec = populate(4);
+        let mut iter = cell_vec.into_iter();
+
+        assert_eq!(*iter.next().unwrap().get(), 0.into());
+        assert_eq!(*iter.next().unwrap().get(), 1.into());
+        assert_eq!(*iter.next().unwrap().get(), 2.into());
+        assert_eq!(*iter.next().unwrap().get(), 3.into());
+
+        assert!(iter.next().is_none());
+    }
 }
