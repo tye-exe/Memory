@@ -54,6 +54,21 @@ where
         self.current_ref.lock().unwrap().clone()
     }
 
+    /// Allows for a value that implements [`Copy`] to be copied out of [`Oda`]. (If a value is present).
+    ///
+    /// This copy is in no way related to the underlying data other than by it's value of the time
+    /// of copying.
+    pub fn copy_value(&self) -> Option<Value>
+    where
+        Value: Copy,
+    {
+        self.current_ref
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|arc_ref| **arc_ref)
+    }
+
     /// Creates new underlying data with the given value; Whilst leaving the old data references uneffected.
     ///
     /// Any subsequent calls to [`get`](Self::get()) will return the new data.
@@ -146,6 +161,17 @@ where
     /// This reference **will be uneffected** by any subsequent mutations.
     pub fn get(&self) -> Arc<Value> {
         self.current_ref.lock().unwrap().clone()
+    }
+
+    /// Allows for a value that implements [`Copy`] to be copied out of [`Da`].
+    ///
+    /// This copy is in no way related to the underlying data other than by it's value of the time
+    /// of copying.
+    pub fn copy_value(&self) -> Value
+    where
+        Value: Copy,
+    {
+        **self.current_ref.lock().unwrap()
     }
 
     /// Creates new underlying data with the given value; Whilst leaving the old data references uneffected.
@@ -421,6 +447,19 @@ mod tests {
             // The pointer to the value set during the mutation will still be valid.
             assert_eq!(*set_value, dummy_data);
         }
+
+        #[test]
+        fn copy_value() {
+            let da = Da::new(5);
+            let copied_value = da.copy_value();
+
+            assert_eq!(*da.get(), copied_value);
+            assert_eq!(copied_value, 5);
+
+            da.mutate(|val| val + 1);
+
+            assert_ne!(*da.get(), copied_value);
+        }
     }
 
     #[cfg(test)]
@@ -584,6 +623,21 @@ mod tests {
             assert_eq!(*empty.unwrap(), Data::default());
 
             assert!(oda.get().is_none());
+        }
+
+        #[test]
+        fn copy_value() {
+            let oda = Oda::new(5);
+            let copied_value = oda.copy_value().unwrap();
+
+            assert_eq!(*oda.get().unwrap(), copied_value);
+            assert_eq!(copied_value, 5);
+
+            oda.mutate(|val| val + 1);
+            assert_ne!(*oda.get().unwrap(), copied_value);
+
+            oda.empty();
+            assert!(oda.copy_value().is_none());
         }
     }
 }
