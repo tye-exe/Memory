@@ -1,15 +1,78 @@
-//! Contains the [`locking_mutate!()`] macro.
+//! Contains the [`locking_mutate`] macro.
 //! See its documentation for more detail.
 
 pub mod data_structures;
-// pub mod locking_mutate;
 
 pub use data_structures::*;
-// pub use locking_mutate::*;
 
+// Used in docs
+#[allow(unused_imports)]
+use crate::data_access::{Da, Oda};
 use std::sync::{Arc, MutexGuard};
 
 #[macro_export]
+/**
+Holds the lock on the internal data for [`Da`] or [`Oda`] structs whilst executing the given
+closure on the internal values.
+
+# Examples
+
+```
+   use cell_memory::{
+       data_access::{Da, Oda},
+       locking_mutate,
+   };
+
+   let name = "AXE".to_owned();
+
+   // Any Da or Oda can be passed in any order.
+   let game_speed = Da::new(1.25f32);
+   let score = Da::new(5);
+   let highscore = Oda::new(8);
+
+   // If you have the closure as a separate variable then rustfmt can format it for you.
+   // You also explicitly need to specify type annotations for the closure, excluding the
+   // return value.
+   let closure = |mut player_score: u64, highscore: Option<u64>, mut game_speed: f32| {
+       // The values passed into & returned by this closure are the internal data.
+       // Any changes made will be applied to the data inside Da/Oda structs.
+       player_score += 1;
+       game_speed = game_speed.max(player_score as f32 / 10f32);
+
+       // It's recommended to have to main logic outside of this macro, due to the lock
+       // being held for the entire execution of the given closure.
+       if let Some(mut highscore) = highscore {
+           if player_score > highscore {
+               highscore += 1;
+           }
+       }
+
+       // As with normal closures you can also capture & use variables in the parent scope.
+       let _message = format!("{name} - Score: {player_score}");
+       // println!("{}", _message);
+
+       // The values have to be returned in the same order they were given as a tuple.
+       (player_score, highscore, game_speed)
+
+       // These WOULD NOT compile
+       // (player_score, game_speed)
+       // (player_score, game_speed, highscore)
+
+       // Returning `()` also fails.
+   };
+
+   // The Da/Oda are comma separated, with a ';' after the last one before the closure.
+   locking_mutate!(score, highscore, game_speed; closure);
+
+   // Values modified as expected.
+   assert_eq!(game_speed.copy_value(), 1.25);
+   assert_eq!(score.copy_value(), 6);
+   assert_eq!(highscore.copy_value().unwrap(), 8);
+
+   // Any values captured by the closure can still be safely used after.
+   assert_eq!(name, "AXE");
+```
+*/
 macro_rules! locking_mutate {
     ($($data_access:ident), +; $func:expr) => {
         {
