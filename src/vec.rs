@@ -1,9 +1,19 @@
 use std::sync::Arc;
 
+use thiserror::Error;
+
 use crate::{
     data_access::{Da, Oda},
     locking_mutate,
 };
+
+const EXPECTED_VALUE_MESSAGE: &str = "Expected value inside array bounds";
+
+#[derive(Error, Debug)]
+enum CellVecErr {
+    #[error("Index out of bounds. Expected {index} (index) <= {max_bound}.")]
+    OutOfBounds { index: usize, max_bound: usize },
+}
 
 struct CellVec<Value>
 where
@@ -13,6 +23,7 @@ where
     capacity: Da<usize>,
     /// The current highest index of any inserted value.
     len: Da<usize>,
+    /// The array which stores the current values.
     array: Da<Box<[Oda<Value>]>>,
 }
 
@@ -49,16 +60,21 @@ impl<Value> CellVec<Value>
 where
     Value: 'static,
 {
-    /// Returns true if the given index is within the allocated bounds of the array.
-    fn in_bounds(&self, index: usize) -> bool {
-        index < *self.len.get()
-    }
-}
+    /// Checks if the given index is within the bounds of the current array length.
+    /// Returning `Ok` & `Err` respective of the above statement.
+    fn in_bounds(&self, index: usize) -> Result<(), CellVecErr> {
+        let within_bounds = index < self.len.copy_value();
 
-impl<Value> CellVec<Value>
-where
-    Value: 'static,
-{
+        match within_bounds {
+            true => Ok(()),
+            false => Err(CellVecErr::OutOfBounds {
+                index,
+                max_bound: self.len.copy_value(),
+            }),
+        }
+    }
+
+    /// Creates a new [`CellVec<Value>`] with 0 capacity.
     pub fn new() -> Self {
         Self {
             capacity: Da::new(0),
@@ -67,16 +83,25 @@ where
         }
     }
 
+    /// Returns the value at the given index.
+    /// If the given index is outside the bounds of the array None is returned.
     pub fn get(&self, index: usize) -> Option<Arc<Value>> {
-        if self.in_bounds(index) {
-            Some(
-                (**self.array.get())[index]
-                    .get()
-                    .expect("A value will always exist"),
-            )
-        } else {
-            None
-        }
+        self.in_bounds(index).ok()?;
+
+        Some(
+            (**self.array.get())[index]
+                .get()
+                .expect(EXPECTED_VALUE_MESSAGE),
+        )
+    }
+
+    /// Sets the given index to the given value, returning the value that was at that index.
+    /// If the given index is outside the bounds of the array None is returned.
+    pub fn set(&self, index: usize, new_value: Value) -> Option<Arc<Value>> {
+        self.in_bounds(index).ok()?;
+
+        let data = (**self.array.get())[index].clone();
+        Some(data.set(new_value).expect(EXPECTED_VALUE_MESSAGE))
     }
 
     pub fn push(&self, new_value: Value) {
@@ -109,10 +134,8 @@ where
         locking_mutate!(len, capacity, array; closure);
     }
 
-    pub fn remove(&self, index: usize) -> Option<Arc<Value>> {
-        if !self.in_bounds(index) {
-            return None;
-        }
+    pub fn remove(&self, index: usize) -> Result<Arc<Value>, CellVecErr> {
+        self.in_bounds(index)?;
 
         let mut removed = None;
 
@@ -145,7 +168,7 @@ where
 
         locking_mutate!(len, capacity, array; closure);
 
-        removed
+        Ok(removed.expect(EXPECTED_VALUE_MESSAGE))
     }
 }
 
@@ -216,9 +239,10 @@ mod tests {
     fn remove_bounds_check() {
         let cell_vec = populate(10);
         // Within array bounds
-        assert!(cell_vec.remove(10).is_none());
+        assert!(cell_vec.remove(9).is_ok());
         // Out of array bounds
-        assert!(cell_vec.remove(21).is_none());
+        assert!(cell_vec.remove(9).is_err());
+        assert!(cell_vec.remove(21).is_err());
     }
 
     #[test]
@@ -278,23 +302,25 @@ mod tests {
     }
 
     #[test]
-    fn shirnks() {
+    fn shirnks() -> Result<(), CellVecErr> {
         let cell_vec = populate(5);
         assert_eq!(cell_vec.capacity.copy_value(), 8usize);
 
-        cell_vec.remove(0);
+        cell_vec.remove(0)?;
         assert_eq!(cell_vec.capacity.copy_value(), 4usize);
-        cell_vec.remove(0);
+        cell_vec.remove(0)?;
         assert_eq!(cell_vec.capacity.copy_value(), 4usize);
 
-        cell_vec.remove(0);
+        cell_vec.remove(0)?;
         assert_eq!(cell_vec.capacity.copy_value(), 2usize);
 
-        cell_vec.remove(0);
+        cell_vec.remove(0)?;
         assert_eq!(cell_vec.capacity.copy_value(), 1usize);
 
-        cell_vec.remove(0);
+        cell_vec.remove(0)?;
         assert_eq!(cell_vec.capacity.copy_value(), 0usize);
+
+        Ok(())
     }
 
     #[test]
@@ -308,5 +334,23 @@ mod tests {
         assert_eq!(*iter.next().unwrap().get(), 3.into());
 
         assert!(iter.next().is_none());
+    }
+
+    #[test]
+    /// The setting function returns the previous value at the index or None
+    /// if the index was out of bounds.
+    fn setting() {
+        let cell_vec = populate(8);
+
+        let set = cell_vec.set(0, 2.into());
+        assert_eq!(*set.unwrap(), 0.into());
+        assert_eq!(*cell_vec.get(0).unwrap(), 2.into());
+
+        let set = cell_vec.set(5, 2.into());
+        assert_eq!(*set.unwrap(), 5.into());
+        assert_eq!(*cell_vec.get(5).unwrap(), 2.into());
+
+        // Out of bounds
+        assert!(cell_vec.set(20, 2.into()).is_none());
     }
 }

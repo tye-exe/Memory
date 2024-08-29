@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 paste = "1.0.15"
+thiserror = "1.0.63"
 
 [dev-dependencies]
 rand = "0.8.5"
