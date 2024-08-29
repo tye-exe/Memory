@@ -69,14 +69,15 @@ where
             .map(|arc_ref| **arc_ref)
     }
 
-    /// Creates new underlying data with the given value; Whilst leaving the old data references uneffected.
+    /// Creates new underlying data with the given value; Returning the old value. All references
+    /// to the old data will continue to remain valid.
     ///
     /// Any subsequent calls to [`get`](Self::get()) will return the new data.
     ///
     /// Any existing references from [`get`](Self::get()) will remain pointing to the old data.
-    pub fn set(&self, new_data: Value) {
+    pub fn set(&self, new_data: Value) -> Option<Arc<Value>> {
         let mut old_data = self.current_ref.lock().unwrap();
-        *old_data = Some(Arc::new(new_data));
+        old_data.replace(Arc::new(new_data))
     }
 
     /// Replaces the the [`Arc`] contained within [`Self`] to the given [`Arc`]. The given [`Arc`] is
@@ -174,14 +175,17 @@ where
         **self.current_ref.lock().unwrap()
     }
 
-    /// Creates new underlying data with the given value; Whilst leaving the old data references uneffected.
+    /// Creates new underlying data with the given value; Returning the old value. All references
+    /// to the old data will continue to remain valid.
     ///
     /// Any subsequent calls to [`get`](Self::get()) will return the new data.
     ///
     /// Any existing references from [`get`](Self::get()) will remain pointing to the old data.
-    pub fn set(&self, new_data: Value) {
-        let mut old_data = self.current_ref.lock().unwrap();
-        *old_data = Arc::new(new_data);
+    pub fn set(&self, new_data: Value) -> Arc<Value> {
+        let mut data = self.current_ref.lock().unwrap();
+        let old_data = Arc::clone(&*data);
+        *data = Arc::new(new_data);
+        old_data
     }
 
     /// Replaces the the [`Arc`] contained within [`Self`] to the given [`Arc`]. The given [`Arc`] is
@@ -460,6 +464,14 @@ mod tests {
 
             assert_ne!(*da.get(), copied_value);
         }
+
+        #[test]
+        /// The previous value must be returned.
+        fn returns_old_data() {
+            let da = Da::new(DummyData::default());
+            let set = da.set(DummyData::new("a", 1));
+            assert_eq!(DummyData::default(), *set);
+        }
     }
 
     #[cfg(test)]
@@ -638,6 +650,14 @@ mod tests {
 
             oda.empty();
             assert!(oda.copy_value().is_none());
+        }
+
+        #[test]
+        /// The previous value must be returned.
+        fn returns_old_data() {
+            let da = Oda::new(DummyData::default());
+            let set = da.set(DummyData::new("a", 1));
+            assert_eq!(DummyData::default(), *set.unwrap());
         }
     }
 }
