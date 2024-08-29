@@ -11,7 +11,7 @@ const EXPECTED_VALUE_MESSAGE: &str = "Expected value inside array bounds";
 
 #[derive(Error, Debug)]
 enum CellVecErr {
-    #[error("Index out of bounds. Expected {index} (index) <= {max_bound}.")]
+    #[error("Index out of bounds. Expected {index} (index) < {max_bound}.")]
     OutOfBounds { index: usize, max_bound: usize },
 }
 
@@ -62,7 +62,7 @@ where
 {
     /// Checks if the given index is within the bounds of the current array length.
     /// Returning `Ok` & `Err` respective of the above statement.
-    fn in_bounds(&self, index: usize) -> Result<(), CellVecErr> {
+    pub fn in_bounds(&self, index: usize) -> Result<(), CellVecErr> {
         let within_bounds = index < self.len.copy_value();
 
         match within_bounds {
@@ -352,5 +352,18 @@ mod tests {
 
         // Out of bounds
         assert!(cell_vec.set(20, 2.into()).is_none());
+    }
+
+    #[test]
+    /// The in_bounds function returns Ok if the index is in bounds & Err if it
+    /// is out of bounds.
+    fn within_bounds() {
+        let cell_vec = populate(5);
+        assert!(cell_vec.in_bounds(0).is_ok());
+        assert!(cell_vec.in_bounds(4).is_ok());
+
+        assert!(cell_vec.in_bounds(5).is_err_and(|err| {
+            format!("{err}") == "Index out of bounds. Expected 5 (index) < 5."
+        }));
     }
 }
