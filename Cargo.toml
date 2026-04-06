@@ -9,4 +9,4 @@ thiserror = "1.0.63"
 
 [dev-dependencies]
 rand = "0.8.5"
-oneshot = "0.1.8"
+oneshot = "0.1.12"
